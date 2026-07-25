@@ -1,0 +1,139 @@
+name: Approved proposal dispatcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      proposal_id:
+        description: "Exact proposal_id contained in the approved proposal"
+        required: true
+        type: string
+      approval_run_id:
+        description: "Proposal approval workflow run ID containing the proposal-decision artifact"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  dispatch-approved-proposal:
+    name: Verify approval and dispatch implementation
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Check out main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate approval run and fixed artifact identity
+        uses: actions/github-script@v7
+        env:
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const runIdText = process.env.APPROVAL_RUN_ID;
+            if (!/^[1-9]\d*$/.test(runIdText)) {
+              core.setFailed("approval_run_id must contain only decimal digits and must not be zero.");
+              return;
+            }
+
+            const runId = Number(runIdText);
+            if (!Number.isSafeInteger(runId)) {
+              core.setFailed("approval_run_id is outside the supported integer range.");
+              return;
+            }
+
+            const run = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+
+            if (run.data.path !== ".github/workflows/proposal-approval.yml") {
+              core.setFailed(
+                `Run ${runIdText} belongs to ${run.data.path || "an unknown workflow"}, not .github/workflows/proposal-approval.yml.`,
+              );
+              return;
+            }
+
+            if (run.data.event !== "workflow_dispatch") {
+              core.setFailed(
+                `Approval run ${runIdText} used event ${run.data.event}, not workflow_dispatch.`,
+              );
+              return;
+            }
+
+            if (run.data.head_branch !== "main") {
+              core.setFailed(
+                `Approval run ${runIdText} used branch ${run.data.head_branch || "unknown"}, not main.`,
+              );
+              return;
+            }
+
+            if (run.data.status !== "completed" || run.data.conclusion !== "success") {
+              core.setFailed(
+                `Approval run ${runIdText} must be completed successfully; status=${run.data.status}, conclusion=${run.data.conclusion}.`,
+              );
+              return;
+            }
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              },
+            );
+            const approvalArtifacts = artifacts.filter(
+              (artifact) => artifact.name === "proposal-decision" && !artifact.expired,
+            );
+
+            if (approvalArtifacts.length !== 1) {
+              core.setFailed(
+                `Approval run ${runIdText} must contain exactly one unexpired proposal-decision artifact; found ${approvalArtifacts.length}.`,
+              );
+            }
+
+      - name: Download fixed approval artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: proposal-decision
+          path: out/source-approval
+          run-id: ${{ inputs.approval_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Verify approved proposal
+        env:
+          REQUESTED_PROPOSAL_ID: ${{ inputs.proposal_id }}
+        run: node scripts/validate-approved-proposal-dispatch.mjs out/source-approval/approved-proposal.json
+
+      - name: Dispatch existing Codex implementation workflow
+        uses: actions/github-script@v7
+        env:
+          PROPOSAL_ID: ${{ inputs.proposal_id }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "codex-implementation.yml",
+              ref: "main",
+              inputs: {
+                proposal_id: process.env.PROPOSAL_ID,
+                approval_run_id: process.env.APPROVAL_RUN_ID,
+              },
+            });
