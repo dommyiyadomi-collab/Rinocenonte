@@ -195,6 +195,7 @@ The proposal-generation stage writes:
 ```text
 out/audit-bundle/ranked-proposals.json
 out/audit-bundle/openai-proposal-response-metadata.json
+out/audit-bundle/proposal-review.md
 ```
 
 It reads but does not modify:
@@ -227,8 +228,27 @@ The proposal-generation job uploads a separate `ranked-proposals` artifact with:
 - `audit-bundle.json`
 - `ranked-proposals.json`
 - `openai-proposal-response-metadata.json`
+- `proposal-review.md`
 
 Generated proposal JSON is not committed to the repository.
+
+## Human Review Report
+
+After `ranked-proposals.json` is written, the workflow runs:
+
+```text
+node scripts/generate-proposal-review.mjs
+```
+
+The report generator reads `ranked-proposals.json` as its only data source and
+writes a readable `proposal-review.md` beside it. It sorts recognized priority
+labels and levels from highest to lowest while preserving source order for ties
+or unrecognized labels. Each proposal includes its title, ID, priority, category,
+impact, risk, implementation cost, review recommendation, evidence, and
+recommended action.
+
+The report is a human-review aid only. It does not approve, reject, defer,
+dispatch, implement, deploy, or modify any proposal.
 
 ## Failure Behavior
 
