@@ -86,6 +86,9 @@ jobs:
           OPENAI_AUDIT_PROPOSAL_TIMEOUT_MS: ${{ vars.OPENAI_AUDIT_PROPOSAL_TIMEOUT_MS }}
         run: node scripts/generate-ranked-proposals.mjs
 
+      - name: Generate proposal review report
+        run: node scripts/generate-proposal-review.mjs
+
       - name: Upload ranked proposals
         if: always()
         uses: actions/upload-artifact@v4
@@ -95,4 +98,5 @@ jobs:
             out/audit-bundle/audit-bundle.json
             out/audit-bundle/ranked-proposals.json
             out/audit-bundle/openai-proposal-response-metadata.json
+            out/audit-bundle/proposal-review.md
           if-no-files-found: error
