@@ -1,0 +1,283 @@
+name: Codex implementation
+
+on:
+  workflow_dispatch:
+    inputs:
+      proposal_id:
+        description: "Exact proposal_id contained in the approved proposal"
+        required: true
+        type: string
+      approval_run_id:
+        description: "Proposal approval workflow run ID containing the proposal-decision artifact"
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  validate-approved-proposal:
+    name: Validate approved proposal and prepare prompt
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      branch_name: ${{ steps.prepare.outputs.branch_name }}
+
+    steps:
+      - name: Check out main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Validate approval run and fixed artifact identity
+        uses: actions/github-script@v7
+        env:
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const runIdText = process.env.APPROVAL_RUN_ID;
+            if (!/^[1-9]\d*$/.test(runIdText)) {
+              core.setFailed("approval_run_id must contain only decimal digits and must not be zero.");
+              return;
+            }
+
+            const runId = Number(runIdText);
+            if (!Number.isSafeInteger(runId)) {
+              core.setFailed("approval_run_id is outside the supported integer range.");
+              return;
+            }
+
+            const run = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: runId,
+            });
+
+            if (run.data.path !== ".github/workflows/proposal-approval.yml") {
+              core.setFailed(
+                `Run ${runIdText} belongs to ${run.data.path || "an unknown workflow"}, not .github/workflows/proposal-approval.yml.`,
+              );
+              return;
+            }
+
+            if (run.data.event !== "workflow_dispatch") {
+              core.setFailed(
+                `Approval run ${runIdText} used event ${run.data.event}, not workflow_dispatch.`,
+              );
+              return;
+            }
+
+            if (run.data.head_branch !== "main") {
+              core.setFailed(
+                `Approval run ${runIdText} used branch ${run.data.head_branch || "unknown"}, not main.`,
+              );
+              return;
+            }
+
+            if (run.data.status !== "completed" || run.data.conclusion !== "success") {
+              core.setFailed(
+                `Approval run ${runIdText} must be completed successfully; status=${run.data.status}, conclusion=${run.data.conclusion}.`,
+              );
+              return;
+            }
+
+            const artifacts = await github.paginate(
+              github.rest.actions.listWorkflowRunArtifacts,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: runId,
+                per_page: 100,
+              },
+            );
+            const approvalArtifacts = artifacts.filter(
+              (artifact) => artifact.name === "proposal-decision" && !artifact.expired,
+            );
+
+            if (approvalArtifacts.length !== 1) {
+              core.setFailed(
+                `Approval run ${runIdText} must contain exactly one unexpired proposal-decision artifact; found ${approvalArtifacts.length}.`,
+              );
+            }
+
+      - name: Download fixed approval artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: proposal-decision
+          path: out/source-approval
+          run-id: ${{ inputs.approval_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Validate approved proposal and generate implementation prompt
+        id: prepare
+        env:
+          REQUESTED_PROPOSAL_ID: ${{ inputs.proposal_id }}
+          APPROVAL_RUN_ID: ${{ inputs.approval_run_id }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: node scripts/prepare-codex-implementation.mjs out/source-approval/approved-proposal.json out/codex-implementation
+
+      - name: Upload auditable implementation prompt
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-implementation-prompt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/codex-implementation/
+          if-no-files-found: error
+          retention-days: 30
+
+  implement-approved-proposal:
+    name: Implement approved proposal and open Draft PR
+    needs: validate-approved-proposal
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: write
+      pull-requests: write
+
+    steps:
+      - name: Check out latest main without persisted credentials
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install repository dependencies before sandboxed implementation
+        run: npm ci
+
+      - name: Download validated implementation prompt
+        uses: actions/download-artifact@v4
+        with:
+          name: codex-implementation-prompt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: out/codex-implementation
+
+      - name: Create dedicated implementation branch
+        env:
+          BRANCH_NAME: ${{ needs.validate-approved-proposal.outputs.branch_name }}
+        run: |
+          git check-ref-format --branch "$BRANCH_NAME"
+          git switch --create "$BRANCH_NAME"
+
+      - name: Require the existing Codex credential
+        env:
+          OPENAI_ACCESS_TOKEN: ${{ secrets.OPENAI_ACCESS_TOKEN }}
+        run: |
+          if [ -z "$OPENAI_ACCESS_TOKEN" ]; then
+            echo "OPENAI_ACCESS_TOKEN is not configured; Codex implementation cannot start." >&2
+            exit 1
+          fi
+
+      - name: Run Codex for the approved proposal
+        uses: openai/codex-action@v1
+        with:
+          openai-api-key: ${{ secrets.OPENAI_ACCESS_TOKEN }}
+          prompt-file: out/codex-implementation/implementation-prompt.txt
+          permission-profile: ":workspace"
+          safety-strategy: drop-sudo
+          allow-bot-users: "github-actions[bot]"
+
+      - name: Run repository tests
+        run: npm test
+
+      - name: Validate HTML
+        run: npx --yes html-validate@latest "public/**/*.html"
+
+      - name: Check internal links and assets
+        run: node scripts/check-internal-links.mjs
+
+      - name: Check render visibility
+        run: node scripts/check-render-visibility.mjs
+
+      - name: Require an implementation change
+        run: |
+          if git diff --quiet && [ -z "$(git ls-files --others --exclude-standard)" ]; then
+            echo "Codex did not produce an implementation change. No branch or PR will be published." >&2
+            exit 1
+          fi
+
+      - name: Prepare Draft PR metadata
+        run: node scripts/prepare-codex-pull-request.mjs out/codex-implementation/implementation-context.json out/codex-implementation/pull-request.json
+
+      - name: Commit only implementation changes
+        env:
+          BRANCH_NAME: ${{ needs.validate-approved-proposal.outputs.branch_name }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && {
+            echo "No implementation changes were staged. No branch or PR will be published." >&2
+            exit 1
+          }
+          git diff --cached --check
+          git commit -m "Implement approved proposal on $BRANCH_NAME"
+
+      - name: Configure push credentials after Codex exits
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          auth_header="$(printf 'x-access-token:%s' "$GITHUB_TOKEN" | base64 -w0)"
+          git config --local http.https://github.com/.extraheader "AUTHORIZATION: basic $auth_header"
+
+      - name: Push dedicated implementation branch
+        env:
+          BRANCH_NAME: ${{ needs.validate-approved-proposal.outputs.branch_name }}
+        run: git push --set-upstream origin "$BRANCH_NAME"
+
+      - name: Create Draft PR and dispatch CI
+        id: draft-pr
+        uses: actions/github-script@v7
+        env:
+          BRANCH_NAME: ${{ needs.validate-approved-proposal.outputs.branch_name }}
+          PR_METADATA_PATH: out/codex-implementation/pull-request.json
+        with:
+          github-token: ${{ github.token }}
+          script: |
+            const fs = require("node:fs");
+            const metadata = JSON.parse(
+              fs.readFileSync(process.env.PR_METADATA_PATH, "utf8"),
+            );
+            const pullRequest = await github.rest.pulls.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title: metadata.title,
+              head: process.env.BRANCH_NAME,
+              base: "main",
+              body: metadata.body,
+              draft: true,
+            });
+
+            await github.rest.actions.createWorkflowDispatch({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: "validate.yml",
+              ref: process.env.BRANCH_NAME,
+            });
+
+            core.setOutput("pull-request-number", pullRequest.data.number);
+            core.setOutput("pull-request-url", pullRequest.data.html_url);
+            await core.summary
+              .addHeading("Draft implementation pull request")
+              .addLink(
+                `#${pullRequest.data.number}`,
+                pullRequest.data.html_url,
+              )
+              .addRaw(" was created. Validate site CI was dispatched for the implementation branch.")
+              .write();
+
+      - name: Remove persisted push credential
+        if: always()
+        run: git config --local --unset-all http.https://github.com/.extraheader || true
