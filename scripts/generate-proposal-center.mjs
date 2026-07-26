@@ -20,6 +20,7 @@ const DEFAULT_PROPOSAL_CENTER_PATH = path.join(
   DEFAULT_OUTPUT_DIR,
   "proposal-center.html",
 );
+const DEFAULT_GITHUB_SERVER_URL = "https://github.com";
 const USAGE =
   "Usage: node scripts/generate-proposal-center.mjs [ranked-proposals.json] [proposal-review.md] [proposal-center.html]";
 
@@ -30,8 +31,12 @@ export class ProposalCenterError extends Error {
   }
 }
 
-export async function main({ argv = process.argv } = {}) {
+export async function main({ argv = process.argv, env = process.env } = {}) {
   const args = argv.slice(2);
+  const sourceRunId = env.GITHUB_RUN_ID;
+  const repository = env.GITHUB_REPOSITORY;
+  const githubServerUrl =
+    env.GITHUB_SERVER_URL || DEFAULT_GITHUB_SERVER_URL;
 
   if (args.length > 3) {
     throw new ProposalCenterError(USAGE);
@@ -47,10 +52,13 @@ export async function main({ argv = process.argv } = {}) {
     proposalCenterPath: args[2]
       ? path.resolve(args[2])
       : DEFAULT_PROPOSAL_CENTER_PATH,
+    sourceRunId,
+    repository,
+    githubServerUrl,
   });
 
   console.log(
-    `Generated read-only Proposal Center with ${result.proposalCount} proposals at ${result.proposalCenterPath}.`,
+    `Generated Proposal Center with ${result.proposalCount} proposals at ${result.proposalCenterPath}.`,
   );
 
   return result;
@@ -60,6 +68,9 @@ export async function generateProposalCenter({
   rankedProposalsPath = DEFAULT_RANKED_PROPOSALS_PATH,
   proposalReviewPath = DEFAULT_PROPOSAL_REVIEW_PATH,
   proposalCenterPath = DEFAULT_PROPOSAL_CENTER_PATH,
+  sourceRunId,
+  repository,
+  githubServerUrl = DEFAULT_GITHUB_SERVER_URL,
 } = {}) {
   const resolvedRankedProposalsPath = path.resolve(rankedProposalsPath);
   const resolvedProposalReviewPath = path.resolve(proposalReviewPath);
@@ -78,7 +89,13 @@ export async function generateProposalCenter({
     );
   }
 
-  const html = renderProposalCenter({ rankedProposals, proposalReview });
+  const html = renderProposalCenter({
+    rankedProposals,
+    proposalReview,
+    sourceRunId,
+    repository,
+    githubServerUrl,
+  });
 
   await mkdir(path.dirname(resolvedProposalCenterPath), { recursive: true });
   await writeFile(resolvedProposalCenterPath, html, "utf8");
@@ -92,7 +109,13 @@ export async function generateProposalCenter({
   };
 }
 
-export function renderProposalCenter({ rankedProposals, proposalReview }) {
+export function renderProposalCenter({
+  rankedProposals,
+  proposalReview,
+  sourceRunId,
+  repository,
+  githubServerUrl = DEFAULT_GITHUB_SERVER_URL,
+}) {
   const validationErrors = validateRankedProposals(rankedProposals);
 
   if (validationErrors.length > 0) {
@@ -155,7 +178,14 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
       ? renderEmptyState()
       : orderedProposals
           .map(({ title, proposal }, index) =>
-            renderProposalCard({ title, proposal, index }),
+            renderProposalCard({
+              title,
+              proposal,
+              index,
+              sourceRunId,
+              repository,
+              githubServerUrl,
+            }),
           )
           .join("\n");
 
@@ -239,7 +269,7 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
       font-size: 1.03rem;
     }
 
-    .read-only {
+    .approval-boundary {
       display: inline-flex;
       gap: 0.48rem;
       align-items: center;
@@ -254,7 +284,7 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
       white-space: nowrap;
     }
 
-    .read-only::before {
+    .approval-boundary::before {
       width: 0.52rem;
       height: 0.52rem;
       border-radius: 50%;
@@ -465,6 +495,73 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
       font-size: 0.93rem;
     }
 
+    .approval-handoff {
+      margin-top: 1.25rem;
+      padding-top: 1.25rem;
+      border-top: 1px solid var(--line);
+    }
+
+    .approval-inputs {
+      display: grid;
+      gap: 0.55rem;
+      margin: 0.85rem 0 0;
+    }
+
+    .approval-inputs div {
+      display: grid;
+      grid-template-columns: minmax(7rem, 0.75fr) minmax(0, 1.25fr);
+      gap: 0.65rem;
+      align-items: center;
+    }
+
+    .approval-inputs dt {
+      color: var(--quiet);
+      font-size: 0.72rem;
+      font-weight: 800;
+    }
+
+    .approval-inputs dd {
+      min-width: 0;
+      margin: 0;
+    }
+
+    .approve-action {
+      display: flex;
+      justify-content: center;
+      width: 100%;
+      margin-top: 1rem;
+      padding: 0.72rem 0.9rem;
+      border: 1px solid var(--blue);
+      border-radius: 0.72rem;
+      background: var(--blue);
+      color: #ffffff;
+      font-size: 0.88rem;
+      font-weight: 800;
+      text-align: center;
+      text-decoration: none;
+    }
+
+    .approve-action:hover {
+      background: #1748c4;
+    }
+
+    .approve-action:focus-visible {
+      outline: 3px solid rgba(34, 91, 232, 0.3);
+      outline-offset: 2px;
+    }
+
+    .approve-action--disabled {
+      border-color: var(--line-strong);
+      background: #e8ebf1;
+      color: var(--muted);
+      cursor: not-allowed;
+    }
+
+    .approval-note {
+      color: var(--muted) !important;
+      font-size: 0.8rem !important;
+    }
+
     .empty-state {
       padding: 3.5rem 1.5rem;
       border: 1px dashed var(--line-strong);
@@ -498,7 +595,7 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
         align-items: start;
       }
 
-      .read-only {
+      .approval-boundary {
         justify-self: start;
       }
 
@@ -536,9 +633,9 @@ export function renderProposalCenter({ rankedProposals, proposalReview }) {
       <div>
         <p class="eyebrow">Daily AI Audit</p>
         <h1>Proposal Center</h1>
-        <p class="intro">Review evidence-backed site proposals in priority order. This page is informational and cannot approve, reject, defer, dispatch, or implement a proposal.</p>
+        <p class="intro">Review evidence-backed site proposals in priority order, then open the existing GitHub Proposal Approval workflow with the exact inputs for the selected proposal.</p>
       </div>
-      <span class="read-only">Read-only review</span>
+      <span class="approval-boundary">GitHub approval boundary</span>
     </header>
 
     <dl class="summary">
@@ -630,7 +727,14 @@ export function parseProposalReview(proposalReview) {
   };
 }
 
-function renderProposalCard({ title, proposal, index }) {
+function renderProposalCard({
+  title,
+  proposal,
+  index,
+  sourceRunId,
+  repository,
+  githubServerUrl,
+}) {
   const cardNumber = index + 1;
   const evidenceMarkup =
     proposal.evidence.length === 0
@@ -638,6 +742,12 @@ function renderProposalCard({ title, proposal, index }) {
       : proposal.evidence
           .map((evidence) => `<li>${escapeHtml(evidence)}</li>`)
           .join("\n            ");
+  const approvalMarkup = renderApprovalHandoff({
+    proposalId: proposal.proposal_id,
+    sourceRunId,
+    repository,
+    githubServerUrl,
+  });
 
   return `      <article class="proposal-card" aria-labelledby="proposal-${cardNumber}-title">
         <div class="proposal-main">
@@ -686,8 +796,90 @@ function renderProposalCard({ title, proposal, index }) {
             <h3>Recommended Action</h3>
             <p>${escapeHtml(proposal.recommended_action)}</p>
           </div>
+${approvalMarkup}
         </div>
       </article>`;
+}
+
+function renderApprovalHandoff({
+  proposalId,
+  sourceRunId,
+  repository,
+  githubServerUrl,
+}) {
+  const workflowUrl = buildApprovalWorkflowUrl({
+    repository,
+    githubServerUrl,
+  });
+
+  if (!hasValue(sourceRunId) || !workflowUrl) {
+    return `          <div class="approval-handoff">
+            <h3>Approve Proposal</h3>
+            <p>Approval is unavailable because the GitHub run or repository metadata was not available when this page was generated.</p>
+            <span class="approve-action approve-action--disabled" aria-disabled="true">Approve unavailable</span>
+          </div>`;
+  }
+
+  return `          <div class="approval-handoff">
+            <h3>Approve Proposal</h3>
+            <p>Open the existing workflow and submit these exact inputs:</p>
+            <dl class="approval-inputs">
+              <div>
+                <dt>source_run_id</dt>
+                <dd><code>${escapeHtml(sourceRunId)}</code></dd>
+              </div>
+              <div>
+                <dt>proposal_id</dt>
+                <dd><code>${escapeHtml(proposalId)}</code></dd>
+              </div>
+              <div>
+                <dt>decision</dt>
+                <dd><code>approve</code></dd>
+              </div>
+            </dl>
+            <a class="approve-action" href="${escapeHtml(workflowUrl)}" target="_blank" rel="noopener noreferrer">Approve in GitHub</a>
+            <p class="approval-note">GitHub authentication and manual workflow submission remain the human approval boundary.</p>
+          </div>`;
+}
+
+function buildApprovalWorkflowUrl({ repository, githubServerUrl }) {
+  if (!hasValue(repository) || !hasValue(githubServerUrl)) {
+    return null;
+  }
+
+  const repositoryParts = String(repository).split("/");
+
+  if (
+    repositoryParts.length !== 2 ||
+    repositoryParts.some((part) => part.length === 0)
+  ) {
+    return null;
+  }
+
+  let workflowUrl;
+
+  try {
+    workflowUrl = new URL(String(githubServerUrl));
+  } catch {
+    return null;
+  }
+
+  if (
+    !["https:", "http:"].includes(workflowUrl.protocol) ||
+    workflowUrl.username ||
+    workflowUrl.password
+  ) {
+    return null;
+  }
+
+  const serverPath = workflowUrl.pathname.replace(/\/+$/, "");
+  const encodedRepository = repositoryParts.map(encodeURIComponent).join("/");
+
+  workflowUrl.pathname = `${serverPath}/${encodedRepository}/actions/workflows/proposal-approval.yml`;
+  workflowUrl.search = "";
+  workflowUrl.hash = "";
+
+  return workflowUrl.href;
 }
 
 function renderEmptyState() {
@@ -745,6 +937,10 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function hasValue(value) {
+  return value !== undefined && value !== null && String(value).trim() !== "";
 }
 
 function collapseWhitespace(value) {
