@@ -196,6 +196,7 @@ The proposal-generation stage writes:
 out/audit-bundle/ranked-proposals.json
 out/audit-bundle/openai-proposal-response-metadata.json
 out/audit-bundle/proposal-review.md
+out/audit-bundle/proposal-center.html
 ```
 
 It reads but does not modify:
@@ -229,6 +230,7 @@ The proposal-generation job uploads a separate `ranked-proposals` artifact with:
 - `ranked-proposals.json`
 - `openai-proposal-response-metadata.json`
 - `proposal-review.md`
+- `proposal-center.html`
 
 Generated proposal JSON is not committed to the repository.
 
@@ -249,6 +251,25 @@ recommended action.
 
 The report is a human-review aid only. It does not approve, reject, defer,
 dispatch, implement, deploy, or modify any proposal.
+
+## Proposal Center
+
+After the review report is generated, the workflow runs:
+
+```text
+node scripts/generate-proposal-center.mjs
+```
+
+The generator reads only `proposal-review.md` and `ranked-proposals.json` and
+writes the self-contained `proposal-center.html` dashboard beside them. It uses
+the report's priority-sorted order and title while displaying the structured
+scores, evidence, recommended action, and an informational initial status of
+`Pending` from the ranked proposal data.
+
+The Proposal Center has no approval controls, client scripts, workflow dispatch,
+or repository-write behavior. See [Daily AI Audit Proposal
+Center](proposal-center.md) for usage, source validation, preview, and boundary
+details.
 
 ## Failure Behavior
 

@@ -89,6 +89,9 @@ jobs:
       - name: Generate proposal review report
         run: node scripts/generate-proposal-review.mjs
 
+      - name: Generate Proposal Center
+        run: node scripts/generate-proposal-center.mjs
+
       - name: Upload ranked proposals
         if: always()
         uses: actions/upload-artifact@v4
@@ -99,4 +102,5 @@ jobs:
             out/audit-bundle/ranked-proposals.json
             out/audit-bundle/openai-proposal-response-metadata.json
             out/audit-bundle/proposal-review.md
+            out/audit-bundle/proposal-center.html
           if-no-files-found: error

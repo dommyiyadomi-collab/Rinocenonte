@@ -1,0 +1,47 @@
+{
+  "generated_at": "2026-07-25T00:00:00.000Z",
+  "site_stack": "Static HTML, CSS, and JavaScript on Cloudflare Pages.",
+  "proposals": [
+    {
+      "proposal_id": "audit-2026-07-25-seo-01",
+      "category": "SEO",
+      "evidence": [
+        "Search performance evidence identifies an opportunity on an existing guide.",
+        "The affected URL is present in the current sitemap and internal link graph."
+      ],
+      "impact_score": 5,
+      "implementation_cost_score": 2,
+      "risk_score": 1,
+      "test_ease_score": 4,
+      "overall_priority": "high",
+      "recommended_action": "Strengthen the digital nomad visa guide around the supported search intent. Validate metadata, headings, and internal links after the scoped edit."
+    },
+    {
+      "proposal_id": "audit-2026-07-25-ux-02",
+      "category": "UX",
+      "evidence": [
+        "Analytics evidence shows readers moving between the city guide and comparison content.",
+        "The existing content supports a clearer comparison path without adding a new page."
+      ],
+      "impact_score": 4,
+      "implementation_cost_score": 3,
+      "risk_score": 1,
+      "test_ease_score": 5,
+      "overall_priority": "medium",
+      "recommended_action": "Clarify the city comparison path with a concise, evidence-backed summary. Preserve the existing URL and navigation structure."
+    },
+    {
+      "proposal_id": "audit-2026-07-25-performance-03",
+      "category": "performance",
+      "evidence": [
+        "The crawl evidence confirms the current hero image reference and responsive variant."
+      ],
+      "impact_score": 2,
+      "implementation_cost_score": 2,
+      "risk_score": 2,
+      "test_ease_score": 4,
+      "overall_priority": "low",
+      "recommended_action": "Review the hero image delivery settings before considering a scoped optimization. Retain the existing visual design."
+    }
+  ]
+}
