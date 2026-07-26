@@ -7,12 +7,18 @@ import test from "node:test";
 import {
   ProposalCenterError,
   generateProposalCenter,
+  main,
   parseProposalReview,
   renderProposalCenter,
 } from "./generate-proposal-center.mjs";
 import { renderProposalReview } from "./generate-proposal-review.mjs";
 
 const FIXED_NOW = "2026-07-25T00:00:00.000Z";
+const GITHUB_METADATA = {
+  sourceRunId: "987654321",
+  repository: "example-owner/example-repository",
+  githubServerUrl: "https://github.example.com",
+};
 
 test("Proposal Center displays required fields in report priority order", () => {
   const rankedProposals = createRankedProposals();
@@ -43,7 +49,48 @@ test("Proposal Center displays required fields in report priority order", () => 
   assert.match(html, /High-priority evidence\./);
 });
 
-test("Proposal Center remains informational and escapes source content", () => {
+test("Proposal Center generates one approval workflow handoff per proposal", () => {
+  const rankedProposals = createRankedProposals();
+  const html = renderProposalCenter({
+    rankedProposals,
+    proposalReview: renderProposalReview(rankedProposals),
+    ...GITHUB_METADATA,
+  });
+  const cards =
+    html.match(/<article class="proposal-card"[\s\S]*?<\/article>/g) ?? [];
+  const orderedProposalIds = [
+    "proposal-high",
+    "proposal-medium",
+    "proposal-low",
+  ];
+  const workflowUrl =
+    "https://github.example.com/example-owner/example-repository/actions/workflows/proposal-approval.yml";
+
+  assert.equal(cards.length, orderedProposalIds.length);
+
+  for (const [index, proposalId] of orderedProposalIds.entries()) {
+    const card = cards[index];
+
+    assert.equal((card.match(/class="approve-action"/g) ?? []).length, 1);
+    assert.ok(card.includes(`href="${workflowUrl}"`));
+    assert.match(
+      card,
+      /<dt>source_run_id<\/dt>\s*<dd><code>987654321<\/code><\/dd>/,
+    );
+    assert.ok(
+      card.includes(
+        `<dt>proposal_id</dt>
+                <dd><code>${proposalId}</code></dd>`,
+      ),
+    );
+    assert.match(
+      card,
+      /<dt>decision<\/dt>\s*<dd><code>approve<\/code><\/dd>/,
+    );
+  }
+});
+
+test("Proposal Center escapes source content and embeds no direct dispatch request", () => {
   const rankedProposals = createRankedProposals();
 
   rankedProposals.proposals[1].proposal_id = "proposal-<script>";
@@ -54,6 +101,9 @@ test("Proposal Center remains informational and escapes source content", () => {
   const html = renderProposalCenter({
     rankedProposals,
     proposalReview: renderProposalReview(rankedProposals),
+    sourceRunId: "987654321",
+    repository: "owner & team/repository?<script>",
+    githubServerUrl: "https://github.example.com/enterprise path",
   });
 
   assert.doesNotMatch(html, /<script>/);
@@ -61,9 +111,43 @@ test("Proposal Center remains informational and escapes source content", () => {
   assert.match(html, /proposal-&lt;script&gt;/);
   assert.match(html, /&lt;strong&gt;signal&lt;\/strong&gt;/);
   assert.match(html, /&amp; document/);
-  assert.doesNotMatch(html, /<button\b/i);
+  assert.match(
+    html,
+    /enterprise%20path\/owner%20%26%20team\/repository%3F%3Cscript%3E\/actions\/workflows\/proposal-approval\.yml/,
+  );
   assert.doesNotMatch(html, /<form\b/i);
   assert.doesNotMatch(html, /workflow_dispatch/);
+  assert.doesNotMatch(html, /\b(?:token|secret|Authorization)\b/i);
+  assert.doesNotMatch(
+    html,
+    /api\.github\.com|\/dispatches\b|fetch\s*\(|XMLHttpRequest/i,
+  );
+});
+
+test("missing GitHub metadata renders approval as safely unavailable", () => {
+  const rankedProposals = createRankedProposals();
+  const html = renderProposalCenter({
+    rankedProposals,
+    proposalReview: renderProposalReview(rankedProposals),
+  });
+
+  assert.equal(
+    (
+      html.match(
+        /class="approve-action approve-action--disabled" aria-disabled="true"/g,
+      ) ?? []
+    ).length,
+    rankedProposals.proposals.length,
+  );
+  assert.equal(
+    (
+      html.match(
+        /Approval is unavailable because the GitHub run or repository metadata was not available/g,
+      ) ?? []
+    ).length,
+    rankedProposals.proposals.length,
+  );
+  assert.doesNotMatch(html, /href="[^"]*proposal-approval\.yml/);
 });
 
 test("file generator reads both sources without modifying them", async () => {
@@ -89,6 +173,52 @@ test("file generator reads both sources without modifying them", async () => {
     assert.equal(result.html, html);
     assert.equal(await readFile(rankedProposalsPath, "utf8"), rankedSource);
     assert.equal(await readFile(proposalReviewPath, "utf8"), reviewSource);
+  });
+});
+
+test("main accepts injected env metadata and defaults the GitHub server URL", async () => {
+  await withTempDir(async (tempDir) => {
+    const rankedProposals = createRankedProposals();
+    const rankedProposalsPath = path.join(tempDir, "ranked-proposals.json");
+    const proposalReviewPath = path.join(tempDir, "proposal-review.md");
+    const proposalCenterPath = path.join(tempDir, "proposal-center.html");
+
+    await writeFile(
+      rankedProposalsPath,
+      `${JSON.stringify(rankedProposals)}\n`,
+      "utf8",
+    );
+    await writeFile(
+      proposalReviewPath,
+      renderProposalReview(rankedProposals),
+      "utf8",
+    );
+
+    const result = await main({
+      argv: [
+        "node",
+        "scripts/generate-proposal-center.mjs",
+        rankedProposalsPath,
+        proposalReviewPath,
+        proposalCenterPath,
+      ],
+      env: {
+        GITHUB_RUN_ID: "246813579",
+        GITHUB_REPOSITORY: "injected-owner/injected-repository",
+        GITHUB_TOKEN: "github-token-sentinel",
+        UNRELATED_SECRET: "secret-sentinel",
+      },
+    });
+
+    assert.match(
+      result.html,
+      /https:\/\/github\.com\/injected-owner\/injected-repository\/actions\/workflows\/proposal-approval\.yml/,
+    );
+    assert.match(result.html, /<code>246813579<\/code>/);
+    assert.doesNotMatch(
+      result.html,
+      /github-token-sentinel|secret-sentinel|Authorization|api\.github\.com|\/dispatches\b/i,
+    );
   });
 });
 

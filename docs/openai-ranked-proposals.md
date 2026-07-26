@@ -264,10 +264,14 @@ The generator reads only `proposal-review.md` and `ranked-proposals.json` and
 writes the self-contained `proposal-center.html` dashboard beside them. It uses
 the report's priority-sorted order and title while displaying the structured
 scores, evidence, recommended action, and an informational initial status of
-`Pending` from the ranked proposal data.
+`Pending` from the ranked proposal data. Each proposal also shows the exact
+`source_run_id`, `proposal_id`, and `decision = approve` inputs and links to the
+existing GitHub Proposal Approval workflow.
 
-The Proposal Center has no approval controls, client scripts, workflow dispatch,
-or repository-write behavior. See [Daily AI Audit Proposal
+The Proposal Center does not approve or dispatch anything itself. It contains no
+credentials, client scripts, direct REST dispatch request, or repository-write
+behavior. GitHub authentication and manual submission of the existing workflow
+remain the human approval boundary. See [Daily AI Audit Proposal
 Center](proposal-center.md) for usage, source validation, preview, and boundary
 details.
 

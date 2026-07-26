@@ -1,8 +1,9 @@
 # Daily AI Audit Proposal Center
 
-The Proposal Center is a read-only HTML dashboard generated during the existing
-Daily Site Audit proposal job. It helps reviewers scan daily proposals in
-priority order without changing any approval or implementation behavior.
+The Proposal Center is a self-contained HTML dashboard generated during the
+existing Daily Site Audit proposal job. It helps reviewers scan daily proposals
+in priority order and hand a selected proposal to the existing GitHub Proposal
+Approval workflow.
 
 ## Preview
 
@@ -26,8 +27,10 @@ node scripts/generate-proposal-center.mjs scripts/fixtures/proposal-center/ranke
 2. Download the existing `ranked-proposals` artifact.
 3. Extract the artifact and open `proposal-center.html` in a browser.
 
-The page is self-contained and does not require a server, network request, or
-deployment.
+The page is self-contained and does not require a server, client-side API
+request, or deployment to review. Using an Approve action opens GitHub and
+therefore requires browser access to the repository and an authenticated GitHub
+session.
 
 ## Displayed Information
 
@@ -44,13 +47,24 @@ Each proposal card shows:
 - evidence summary
 - recommended action
 - current status
+- an Approve action with the exact Proposal Approval workflow inputs
 
 Every proposal is displayed with an initial status of `Pending`. The status is
 informational only and is not derived from approval artifacts.
 
+The Approve action opens:
+
+```text
+{GITHUB_SERVER_URL}/{GITHUB_REPOSITORY}/actions/workflows/proposal-approval.yml
+```
+
+Each card displays the exact `source_run_id` and `proposal_id` values to submit,
+plus `decision` set to `approve`. A reviewer may also enter the workflow's
+optional `decision_reason` before manually running it.
+
 ## Source And Ordering
 
-The generator reads only:
+The generator reads proposal content only from:
 
 ```text
 out/audit-bundle/proposal-review.md
@@ -61,6 +75,12 @@ The existing review report supplies the proposal title and priority-sorted
 display order. The ranked JSON supplies the structured proposal fields. The
 generator verifies that both sources have the same generation timestamp,
 proposal count, and proposal IDs before writing the page.
+
+For the approval handoff, it also reads `GITHUB_RUN_ID`, `GITHUB_REPOSITORY`,
+and `GITHUB_SERVER_URL` from the generation environment. `GITHUB_SERVER_URL`
+defaults to `https://github.com`. If the required GitHub run or repository
+metadata is unavailable, every proposal shows a clear unavailable action
+instead of a workflow link.
 
 To generate the default output locally:
 
@@ -74,10 +94,15 @@ The default output is:
 out/audit-bundle/proposal-center.html
 ```
 
-## Read-Only Boundary
+Local generation normally has no GitHub run metadata, so its approval actions
+remain unavailable unless that metadata is explicitly supplied.
 
-The Proposal Center contains no approval or rejection controls, forms, client
-scripts, workflow dispatch calls, or repository writes. It does not change:
+## Approval Handoff And Boundary
+
+The Approve action is a normal link to the existing GitHub Proposal Approval
+workflow. The generated page contains no credentials, forms, client scripts,
+REST dispatch requests, or repository writes, and it does not approve a
+proposal by itself. It does not change:
 
 - proposal IDs
 - Proposal Approval workflow inputs or behavior
@@ -85,4 +110,5 @@ scripts, workflow dispatch calls, or repository writes. It does not change:
 - Codex Implementation workflow inputs or behavior
 - deployment configuration or production site files
 
-The established approval workflow remains the only approval boundary.
+GitHub authentication and the reviewer's manual submission of the existing
+workflow remain the human approval boundary.
